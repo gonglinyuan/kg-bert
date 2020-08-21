@@ -41,7 +41,6 @@ from pytorch_pretrained_bert.modeling import BertForSequenceClassification, Bert
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
 
-os.environ['CUDA_VISIBLE_DEVICES']= '1'
 #torch.backends.cudnn.deterministic = True
 
 logger = logging.getLogger(__name__)
@@ -379,11 +378,11 @@ def _truncate_seq_triple(tokens_a, tokens_b, tokens_c, max_length):
         total_length = len(tokens_a) + len(tokens_b) + len(tokens_c)
         if total_length <= max_length:
             break
-        if len(tokens_a) > len(tokens_b) and len(tokens_a) > len(tokens_c):
+        if len(tokens_a) >= len(tokens_b) and len(tokens_a) >= len(tokens_c):
             tokens_a.pop()
-        elif len(tokens_b) > len(tokens_a) and len(tokens_b) > len(tokens_c):
+        elif len(tokens_b) >= len(tokens_a) and len(tokens_b) >= len(tokens_c):
             tokens_b.pop()
-        elif len(tokens_c) > len(tokens_a) and len(tokens_c) > len(tokens_b):
+        elif len(tokens_c) >= len(tokens_a) and len(tokens_c) >= len(tokens_b):
             tokens_c.pop()
         else:
             tokens_c.pop()
@@ -560,8 +559,13 @@ def main():
 
     train_examples = None
     num_train_optimization_steps = 0
+    print("distributed_world_size", torch.distributed.get_world_size())
     if args.do_train:
-        train_examples = processor.get_train_examples(args.data_dir)
+        if os.path.exists(f"../train_example_cache.pt"):
+            train_examples = torch.load(f"../train_example_cache.pt")
+        else:
+            train_examples = processor.get_train_examples(args.data_dir)
+            torch.save(train_examples, f"../train_example_cache.pt")
         num_train_optimization_steps = int(
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
         if args.local_rank != -1:
@@ -620,9 +624,12 @@ def main():
     nb_tr_steps = 0
     tr_loss = 0
     if args.do_train:
-
-        train_features = convert_examples_to_features(
-            train_examples, label_list, args.max_seq_length, tokenizer)
+        if os.path.exists(f"../train_feature_cache_{args.max_seq_length}.pt"):
+            train_features = torch.load(f"../train_feature_cache_{args.max_seq_length}.pt")
+        else:
+            train_features = convert_examples_to_features(
+                train_examples, label_list, args.max_seq_length, tokenizer)
+            torch.save(train_features, f"../train_feature_cache_{args.max_seq_length}.pt")
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
@@ -702,10 +709,20 @@ def main():
     model.to(device)
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        
-        eval_examples = processor.get_dev_examples(args.data_dir)
-        eval_features = convert_examples_to_features(
-            eval_examples, label_list, args.max_seq_length, tokenizer)
+
+        if os.path.exists(f"../dev_example_cache.pt"):
+            eval_examples = torch.load(f"../dev_example_cache.pt")
+        else:
+            eval_examples = processor.get_dev_examples(args.data_dir)
+            torch.save(eval_examples, f"../dev_example_cache.pt")
+
+        if os.path.exists(f"../dev_feature_cache_{args.max_seq_length}.pt"):
+            eval_features = torch.load(f"../dev_feature_cache_{args.max_seq_length}.pt")
+        else:
+            eval_features = convert_examples_to_features(
+                eval_examples, label_list, args.max_seq_length, tokenizer)
+            torch.save(eval_features, f"../dev_feature_cache_{args.max_seq_length}.pt")
+
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
@@ -782,9 +799,19 @@ def main():
             triple_str = '\t'.join(triple)
             all_triples_str_set.add(triple_str)
 
-        eval_examples = processor.get_test_examples(args.data_dir)
-        eval_features = convert_examples_to_features(
-            eval_examples, label_list, args.max_seq_length, tokenizer)
+        if os.path.exists(f"../test_example_cache.pt"):
+            eval_examples = torch.load(f"../test_example_cache.pt")
+        else:
+            eval_examples = processor.get_test_examples(args.data_dir)
+            torch.save(eval_examples, f"../test_example_cache.pt")
+
+        if os.path.exists(f"../test_feature_cache_{args.max_seq_length}.pt"):
+            eval_features = torch.load(f"../test_feature_cache_{args.max_seq_length}.pt")
+        else:
+            eval_features = convert_examples_to_features(
+                eval_examples, label_list, args.max_seq_length, tokenizer)
+            torch.save(eval_features, f"../test_feature_cache_{args.max_seq_length}.pt")
+
         logger.info("***** Running Prediction *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
