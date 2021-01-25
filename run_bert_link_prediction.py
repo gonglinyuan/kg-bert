@@ -164,6 +164,38 @@ class KGProcessor(DataProcessor):
         """Gets test triples."""
         return self._read_tsv(os.path.join(data_dir, "test.tsv"))
 
+    def build_type_constrain(self, data_dir):
+        #relation_to_entity
+        KE_id2ent = {}
+        with open(os.path.join(data_dir, "entity2id.txt"), "r") as f:
+            lines = f.readlines()
+        for line in lines[1:]:
+            emid, ent_id = line.strip().split('\t')
+            KE_id2ent[ent_id] = emid
+
+        KE_id2rel = {}
+        with open(os.path.join(data_dir, "relation2id.txt"), "r") as f:
+            lines = f.readlines()
+        for line in lines[1:]:
+            rmid, rel_id = line.strip().split('\t')
+            KE_id2rel[rel_id] = rmid
+
+        with open(os.path.join(data_dir, "type_constrain.txt"), "r") as f:
+            lines = f.readlines()
+
+        rel2valid_head, rel2valid_tail = {}, {}
+        for num_line, line in enumerate(lines[1:]):
+            line = line.strip().split('\t')
+            relation = KE_id2rel[line[0]]
+            ents = [KE_id2ent[ent] for ent in line[2:]]
+            assert len(ents)==int(line[1])
+            if num_line%2==0: #head
+                rel2valid_head[relation] = ents
+            else:
+                rel2valid_tail[relation] = ents
+        return rel2valid_head, rel2valid_tail
+
+
     def _create_examples(self, lines, set_type, data_dir):
         """Creates examples for the training and dev sets."""
         # entity to text
@@ -554,12 +586,12 @@ def main():
 
     entity_list = processor.get_entities(args.data_dir)
     #print(entity_list)
+    rel2valid_head, rel2valid_tail = processor.build_type_constrain(args.data_dir)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
 
     train_examples = None
     num_train_optimization_steps = 0
-    print("distributed_world_size", torch.distributed.get_world_size())
     if args.do_train:
         if os.path.exists(f"../train_example_cache.pt"):
             train_examples = torch.load(f"../train_example_cache.pt")
@@ -936,7 +968,8 @@ def main():
             #print(test_triple, head, relation, tail)
 
             head_corrupt_list = [test_triple]
-            for corrupt_ent in entity_list:
+            tmp_entity_list = rel2valid_head[relation]
+            for corrupt_ent in tmp_entity_list:
                 if corrupt_ent != head:
                     tmp_triple = [corrupt_ent, relation, tail]
                     tmp_triple_str = '\t'.join(tmp_triple)
@@ -995,7 +1028,8 @@ def main():
                 top_ten_hit_count += 1
 
             tail_corrupt_list = [test_triple]
-            for corrupt_ent in entity_list:
+            tmp_entity_list = rel2valid_tail[relation]
+            for corrupt_ent in tmp_entity_list:
                 if corrupt_ent != tail:
                     tmp_triple = [head, relation, corrupt_ent]
                     tmp_triple_str = '\t'.join(tmp_triple)
